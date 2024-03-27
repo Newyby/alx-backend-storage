@@ -1,34 +1,39 @@
 #!/usr/bin/env python3
-import requests
-import time
+
 from functools import wraps
-from typing import Dict
+import redis
+from requests import get
+from typing import Callable
 
-cache: Dict[str, str] = {}
 
-def get_page(url: str) -> str:
-    if url in cache:
-        print(f"Retrieving from cache: {url}")
-        return cache[url]
-    else:
-        print(f"Retrieving from web: {url}")
-        response = requests.get(url)
-        result = response.text
-        cache[url] = result
+redis_client = redis.Redis()
+
+
+def responsed_cached_or_not(fn: Callable) -> Callable:
+    """
+    A simple decorator to cache a http request in redis
+    """
+    @wraps(fn)
+    def wrapper(url):
+        """
+        The wrapper function which gets returned
+        by the decorator
+        """
+        redis_client.incr(f"count:{url}")
+        cached_response = redis_client.get(f"cached:{url}")
+        if cached_response:
+            return cached_response.decode('utf-8')
+        result = fn(url)
+        redis_client.setex(f"cached:{url}", 10, result)
         return result
 
-def cache_with_expiration(expiration: int):
-    def decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            url = args[0]
-            key = f"count:{url}"
-            if key in cache:
-                count, timestamp = cache[key]
-                if time.time() - timestamp > expiration:
-                    result = func(*args, **kwargs)
-                    cache[key] = (count+1, time.time())
-                    return result
-                else:
-                    cache[key] = (count+1, timestamp)
-                    return
+    return wrapper
+
+
+@responsed_cached_or_not
+def get_page(url: str) -> str:
+    """
+    A simple function to make http requests
+    to a certain endpoint
+    """
+    return get(url).text

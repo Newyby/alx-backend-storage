@@ -1,133 +1,80 @@
 #!/usr/bin/env python3
-
-"""
-A simple module with basic practice projects
-on how to use reddis for caching and how to use
-the redis client in python
-"""
-
-from redis import Redis
-from uuid import uuid4
+import redis
+import uuid
 from typing import Union, Callable, Optional
 from functools import wraps
 
 
 def count_calls(method: Callable) -> Callable:
-    """
-    A decorator to count the number of times a
-    function has been called and record it in cache
-    Args:
-        method (Callable): The function to keep tabs on
-    Returns:
-        Returns a callable
-    """
+    ''' def count calls '''
     @wraps(method)
-    def wrapper(self, *args, **kwargs):
-        """
-        The callback that gets returned by the decorator
-        Args:
-            args(list): A list of arguments
-            kwargs(dict): A dictionary of keyworded args
-        Returns:
-            returns the return value of calling the `method`
-            method, passing in the args passed to this function
-        """
-        self._redis.incr(method.__qualname__)
-        return method(self, *args, **kwargs)
-
+    def wrapper(self, *args, **kwds):
+        ''' def wrapper '''
+        key_name = method.__qualname__
+        self._redis.incr(key_name, 0) + 1
+        return method(self, *args, **kwds)
     return wrapper
 
 
 def call_history(method: Callable) -> Callable:
-    """
-    A decorator to keep tabs on a function when its called
-    Args:
-        method (Callable): The callable object
-    Returns:
-        Returns a callable
-    """
+    ''' def call history '''
     @wraps(method)
-    def wrapper(self, *args, **kwargs):
-        input_string = str(args)
-        self._redis.rpush(f"{method.__qualname__}:inputs", input_string)
-        output_string = str(method(self, *args, **kwargs))
-        self._redis.rpush(f"{method.__qualname__}:outputs", output_string)
-        return output_string
-
+    def wrapper(self, *args, **kwds):
+        ''' def wrapper'''
+        key_m = method.__qualname__
+        inp_m = key_m + ':inputs'
+        outp_m = key_m + ":outputs"
+        data = str(args)
+        self._redis.rpush(inp_m, data)
+        fin = method(self, *args, **kwds)
+        self._redis.rpush(outp_m, str(fin))
+        return fin
     return wrapper
 
 
-def replay(fn: Callable):
-    """
-    Replay a function a buch of times
-    Args:
-        fn (Callable): The callback function
-    """
-    mem = Redis()
-    func_name_qual = fn.__qualname__
-    value = int(mem.get(func_name_qual) or b"0")
-    print(f"{func_name_qual} was called {value} times:")
-    inputs = mem.lrange(f"{func_name_qual}:inputs", 0, -1)
-    outputs = mem.lrange(f"{func_name_qual}:outputs", 0, -1)
+def replay(func: Callable):
+    '''def replay'''
+    r = redis.Redis()
+    key_m = func.__qualname__
+    inp_m = r.lrange("{}:inputs".format(key_m), 0, -1)
+    outp_m = r.lrange("{}:outputs".format(key_m), 0, -1)
+    calls_number = len(inp_m)
+    times_str = 'times'
+    if calls_number == 1:
+        times_str = 'time'
+    fin = '{} was called {} {}:'.format(key_m, calls_number, times_str)
+    print(fin)
+    for k, v in zip(inp_m, outp_m):
+        fin = '{}(*{}) -> {}'.format(
+            key_m,
+            k.decode('utf-8'),
+            v.decode('utf-8')
+        )
+        print(fin)
 
-    for input_bytes, output_bytes in zip(inputs, outputs):
-        input_string = input_bytes.decode("utf-8")
-        output_string = output_bytes.decode("utf-8")
-        print(f"{func_name_qual}(*{input_string}) -> {output_string}")
 
-
-class Cache:
-    """
-    A simple cache class
-    """
+class Cache():
+    ''' class cache '''
     def __init__(self):
-        """
-        The default constructor
-        """
-        self._redis = Redis()
+        ''' def init '''
+        self._redis = redis.Redis()
         self._redis.flushdb()
 
-    @count_calls
-    @call_history
     def store(self, data: Union[str, bytes, int, float]) -> str:
-        """
-        Store an item in the memory
-        Args:
-            data (Union): The item to be stored
-        """
-        store_key = str(uuid4())
-        self._redis.set(store_key, data)
-        return store_key
+        ''' def store '''
+        generate = str(uuid.uuid4())
+        self._redis.set(generate, data)
+        return generate
 
     def get(self, key: str,
             fn: Optional[Callable] = None) -> Union[str, bytes, int, float]:
-        """
-        Get an item in from the memory
-        Args:
-            key: the item to be retrieved
-        fn (Callable): The callback function
-        """
+        ''' def get '''
         value = self._redis.get(key)
-        if fn:
-            value = fn(value)
-        return value
+        return value if not fn else fn(value)
 
-    def get_str(self, key: str) -> str:
-        """
-        The the string repr of a value stored in memory
-        Args:
-            key (str): Key to the item to retrieve
-        """
+    def get_int(self, key):
+        return self.get(key, int)
+
+    def get_str(self, key):
         value = self._redis.get(key)
         return value.decode("utf-8")
-
-    def get_int(self, key: str) -> int:
-        """
-        Get int helper function
-        Args:
-            key (str): The key to the value to retrieve
-        Returns:
-            retuns an int
-        """
-        value = self._redis.get(key)
-        return int(value.decode("utf-8", errors="ignore") or 0)
